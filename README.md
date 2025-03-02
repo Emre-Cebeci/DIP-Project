@@ -7,7 +7,7 @@
    `source ./venv/bin/activate`
 
 3. Install the required dependencies: <br>
-   `pip install -r ./reqirements.txt`
+   `pip install -r ./requirements.txt`
 
 4. Run: <br>
    `python3 ./main.py`
