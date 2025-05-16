@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QMdiArea,
                              QFormLayout, QCheckBox, QComboBox, QSpinBox,
                              QGridLayout, QToolBar)
 
-from PyQt5.QtGui import (QImage, QPixmap, QIntValidator, QPainter, QColor, 
+from PyQt5.QtGui import (QImage, QPixmap, QIntValidator, QDoubleValidator, QPainter, QColor, 
                          qBlue, qGreen, qRed, QBrush, QValidator, QIcon)
 
 from PyQt5.QtCore import Qt, QPoint, QSize
@@ -79,10 +79,6 @@ class MainWindow(QMainWindow):
         self.apply_grayscale_action.setDisabled(True)
         self.apply_grayscale_action.triggered.connect(self.apply_grayscale)
 
-        self.apply_color_space_change_action = QAction("Renk Uzayı Değiştir")
-        self.apply_color_space_change_action.setDisabled(True)
-        self.apply_color_space_change_action.triggered.connect(self.apply_color_space_change)
-
         self.apply_gaussian_blur_action = QAction("Gaussian Blur Uygula")
         self.apply_gaussian_blur_action.setDisabled(True)
         self.apply_gaussian_blur_action.triggered.connect(self.apply_gaussian_blur)
@@ -94,6 +90,18 @@ class MainWindow(QMainWindow):
         self.apply_binary_thresholding_action = QAction("Eşikleme")
         self.apply_binary_thresholding_action.setDisabled(True)
         self.apply_binary_thresholding_action.triggered.connect(self.apply_binary_thresholding)
+
+        self.apply_resize_action = QAction("Buyutu Değiştir")
+        self.apply_resize_action.setDisabled(True)
+        self.apply_resize_action.triggered.connect(self.apply_resize)
+
+        self.apply_zoom_action = QAction("Yakınlaştır")
+        self.apply_zoom_action.setDisabled(True)
+        self.apply_zoom_action.triggered.connect(self.apply_zoom)
+
+        self.apply_rotate_action = QAction("Döndür")
+        self.apply_rotate_action.setDisabled(True)
+        self.apply_rotate_action.triggered.connect(self.apply_rotate)
 
         self.show_controls_action = QAction("Kontroller")
         self.show_controls_action.triggered.connect(self.show_controls)
@@ -115,12 +123,17 @@ class MainWindow(QMainWindow):
         self.file_menu.addAction(self.new_action)
         self.file_menu.addAction(self.open_action)
 
-        self.basic_operations = self.menuBar().addMenu("Ödev 1: Temel İşlevselliği Oluştur")
+        self.basic_operations = self.menuBar().addMenu("Ödev 1: Temel")
         self.basic_operations.addAction(self.apply_grayscale_action)
-        self.basic_operations.addAction(self.apply_color_space_change_action)
         self.basic_operations.addAction(self.apply_gaussian_blur_action)
         self.basic_operations.addAction(self.apply_histogram_equalizer_action)
         self.basic_operations.addAction(self.apply_binary_thresholding_action)
+
+        self.transform_operations = self.menuBar().addMenu("Ödev 2: Dönüşüm")
+        self.transform_operations.addAction(self.apply_resize_action)
+        self.transform_operations.addAction(self.apply_zoom_action)
+        self.transform_operations.addAction(self.apply_rotate_action)
+
 
         self.help = self.menuBar().addMenu("Yardım")
         self.help.addAction(self.show_controls_action)
@@ -131,6 +144,9 @@ class MainWindow(QMainWindow):
         
         self.load_image(self.original_image)
 
+
+
+
         
 # ------------ Start of File Operations ------------
 
@@ -139,21 +155,22 @@ class MainWindow(QMainWindow):
 
         if dialog.exec():
             width, height = dialog.get_width_height()
-            img_arr = np.full((height, width, 3), 255, dtype=np.uint8)
-            img = SImage(img_arr, "rgb")
+            img = SImage.new_empty_image(width, height)
             self.load_image(img)
 
     def open_image(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Görüntü Aç", "", "Görsel (*.png *.jpg *.jpeg *.bmp *.gif)")
         
         try:
-            img = SImage.from_file_path(file_path, "rgb")
+            img = SImage.from_file_path(file_path)
             self.load_image(img)
         
         except FileNotFoundError as e:
             self.show_error_dialog(e)
 
 # ------------ End of File Operations ------------
+
+
 
 
 # ------------ Start of Help ------------
@@ -165,27 +182,15 @@ class MainWindow(QMainWindow):
 # ------------ End of Help ------------
 
 
+
+
+
     def load_image(self, image: SImage):
-        if image is None or image.image_array.size == 0:
+        if image is None or image.R_matrix.rows == 0 or image.R_matrix.cols == 0:
             self.show_error_dialog("Görüntü yüklenirken bir hata oluştu.")
             return
-        
-        if image.color_space == "gray":
-            height, width = image.image_array.shape
-            bytes_per_line = width
-            q_image = QImage(image.image_array.data, width, height, bytes_per_line, QImage.Format_Grayscale8)
 
-        elif image.color_space == "rgb":
-            height, width, channels = image.image_array.shape
-            bytes_per_line = channels * width
-            q_image = QImage(image.image_array.data, width, height, bytes_per_line, QImage.Format_RGB888)
-
-        elif image.color_space == "hsv":
-            height, width, channels = image.image_array.shape
-            bytes_per_line = channels * width
-            q_image = QImage(image.change_color_space("rgb").image_array.data, width, height, bytes_per_line, QImage.Format_RGB888)
-
-        self.pixmap = QPixmap.fromImage(q_image)
+        self.pixmap = QPixmap.fromImage(image.as_qimage())
         self.image_view.pixmap_item.setPixmap(self.pixmap)
         self.image_view.setAlignment(Qt.AlignCenter)
         self.left_layout.addWidget(self.image_view)
@@ -198,10 +203,12 @@ class MainWindow(QMainWindow):
         self.details_widget.update_details()
 
         self.apply_grayscale_action.setDisabled(False)
-        self.apply_color_space_change_action.setDisabled(False)
         self.apply_gaussian_blur_action.setDisabled(False)
         self.apply_histogram_equalizer_action.setDisabled(False)
         self.apply_binary_thresholding_action.setDisabled(False)
+        self.apply_resize_action.setDisabled(False)
+        self.apply_zoom_action.setDisabled(False)
+        self.apply_rotate_action.setDisabled(False)
 
         self.undo_action.setDisabled(False)
         
@@ -213,25 +220,18 @@ class MainWindow(QMainWindow):
         error_dialog.exec_()
 
 
-# ------------ Start of Basic Operations ------------
+
+
+
+
+# ------------ Start of Operations ------------
 
     def apply_grayscale(self):
         self.original_image = self.current_image
-        img = self.current_image.change_color_space("gray")
-        self.load_image(img)
-
-    def apply_color_space_change(self):
-        dialog = _ColorSpaceOptionDialog(self)
-
-        if dialog.exec():
-            option = dialog.get_selected_option()
-            if option is None:
-                return
-        
-        self.original_image = self.current_image
-        img = self.current_image.change_color_space(option)
+        img = self.current_image.apply_grayscale()
         self.load_image(img)
     
+
     def apply_gaussian_blur(self):
         dialog = _GaussianBlurKernelDialog(self.current_image, self)
 
@@ -240,18 +240,16 @@ class MainWindow(QMainWindow):
             if kernel_size is None:
                 return
 
-        self.original_image = self.current_image
-        img = self.current_image.apply_gaussian_blur((kernel_size, kernel_size))
-        self.load_image(img)
+            self.original_image = self.current_image
+            img = self.current_image.apply_gaussian_blur(kernel_size)
+            self.load_image(img)
     
+
     def apply_histogram_equalizer(self):
-        if self.current_image.color_space != "gray":
-            self.show_error_dialog("Görüntü gri renk uzayında olmalı.")
-            return
-        
         self.original_image = self.current_image
         img = self.current_image.apply_histogram_equalizer()
         self.load_image(img)
+
 
     def apply_binary_thresholding(self):
         dialog = _ThresholdingDialog(self)
@@ -261,15 +259,55 @@ class MainWindow(QMainWindow):
             if threshold_value is None or max_value is None:
                 return
         
-        self.original_image = self.current_image
-        img = self.current_image.apply_binary_thresholding(threshold_value, max_value)
-        self.load_image(img)
+            self.original_image = self.current_image
+            img = self.current_image.apply_binary_thresholding(threshold_value, max_value)
+            self.load_image(img)
 
 
-# ------------ End of Basic Operations ------------
+    def apply_resize(self):
+        dialog = _SizeInputDialogWithInterpolation(self)
+
+        if dialog.exec():
+            width, height, interpol = dialog.get_width_height()
+
+            if width is None or height is None or interpol is None:
+                return
+
+            self.original_image = self.current_image
+            img = self.current_image.resize(width, height, interpol) # type: ignore
+            self.load_image(img)
+
+
+    def apply_zoom(self):
+        dialog = _ZoomInputDialog(self)
+
+        if dialog.exec():
+            factor, interpol = dialog.get_width_height()
+
+            if factor is None or interpol is None:
+                return
+
+            self.original_image = self.current_image
+            img = self.current_image.zoom(factor, interpol) # type: ignore
+            self.load_image(img)
+
+    def apply_rotate(self):
+        dialog = _RotateInputDialog(self)
+
+        if dialog.exec():
+            factor, interpol = dialog.get_width_height()
+
+            if factor is None or interpol is None:
+                return
+
+            self.original_image = self.current_image
+            img = self.current_image.rotate(factor, True, interpol) # type: ignore
+            self.load_image(img)
+
+# ------------ End of Operations ------------
 
 class _ThresholdingDialog(QDialog):
-    def __init__(self, image: SImage, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Eşikleme İçin Değerler Seç")
         self.resize(300, 150)
@@ -301,7 +339,7 @@ class _ThresholdingDialog(QDialog):
 
     def get_values(self):
         return self.threshold_value.value(), self.max_value_value.value()
-    
+
 
 class _SizeInputDialog(QDialog):
     def __init__(self, parent=None):
@@ -354,29 +392,157 @@ class _SizeInputDialog(QDialog):
         return int(self.width_input.text()), int(self.height_input.text())
 
 
-class _ColorSpaceOptionDialog(QDialog):
+class _SizeInputDialogWithInterpolation(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Renk Uzayı Seç")
+        self.setWindowTitle("Görüntü Boyutlarını Girin")
         self.resize(300, 150)
 
         layout = QVBoxLayout()
 
-        self.label = QLabel("Renk Uzayı:")
-        self.combo_box = QComboBox()
-        self.combo_box.addItems(["Gray", "RGB", "HSV"])
+        self.width_label = QLabel("Genişlik:")
+        self.width_input = QLineEdit()
+        self.width_input.setValidator(QIntValidator(1, 10000))
+
+        self.height_label = QLabel("Yükseklik:")
+        self.height_input = QLineEdit()
+        self.height_input.setValidator(QIntValidator(1, 10000))
 
         self.ok_button = QPushButton("Tamam")
         self.ok_button.clicked.connect(self.accept)
 
+        self.ok_button.setEnabled(False)
+
+        width_layout = QHBoxLayout()
+        width_layout.addWidget(self.width_label)
+        width_layout.addWidget(self.width_input)
+
+        height_layout = QHBoxLayout()
+        height_layout.addWidget(self.height_label)
+        height_layout.addWidget(self.height_input)
+
+        self.label = QLabel("Enterpolasyon Yöntemi:")
+        self.combo_box = QComboBox()
+        self.combo_box.addItems(["Nearest", "Bilinear", "Bicubic"])
+
+        layout.addLayout(width_layout)
+        layout.addLayout(height_layout)
         layout.addWidget(self.label)
         layout.addWidget(self.combo_box)
         layout.addWidget(self.ok_button)
 
         self.setLayout(layout)
 
-    def get_selected_option(self):
-        return self.combo_box.currentText().lower()
+        self.width_input.textChanged.connect(self.validate_inputs)
+        self.height_input.textChanged.connect(self.validate_inputs)
+
+    def validate_inputs(self):
+        width_valid = self.width_input.validator().validate(self.width_input.text(), 0)[0] == QIntValidator.Acceptable
+        height_valid = self.height_input.validator().validate(self.height_input.text(), 0)[0] == QIntValidator.Acceptable
+
+        if width_valid and height_valid:
+            self.ok_button.setEnabled(True)
+        else:
+            self.ok_button.setEnabled(False)
+
+    def get_width_height(self):
+        return int(self.width_input.text()), int(self.height_input.text()), self.combo_box.currentText().lower()
+
+
+class _ZoomInputDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Yakınlaştırma faktorü girin (0 ile 2 arasında reel bir sayı):")
+        self.resize(300, 150)
+
+        layout = QVBoxLayout()
+
+        self.factor_label = QLabel("Faktör:")
+        self.factor_input = QLineEdit()
+        self.factor_input.setValidator(QDoubleValidator(0.01, 2.0, 2))
+
+
+        self.ok_button = QPushButton("Tamam")
+        self.ok_button.clicked.connect(self.accept)
+
+        self.ok_button.setEnabled(False)
+
+        factor_layout = QHBoxLayout()
+        factor_layout.addWidget(self.factor_label)
+        factor_layout.addWidget(self.factor_input)
+
+
+        self.label = QLabel("Enterpolasyon Yöntemi:")
+        self.combo_box = QComboBox()
+        self.combo_box.addItems(["Nearest", "Bilinear", "Bicubic"])
+
+        layout.addLayout(factor_layout)
+        layout.addWidget(self.label)
+        layout.addWidget(self.combo_box)
+        layout.addWidget(self.ok_button)
+
+        self.setLayout(layout)
+
+        self.factor_input.textChanged.connect(self.validate_inputs)
+
+    def validate_inputs(self):
+        factor_valid = self.factor_input.validator().validate(self.factor_input.text(), 0)[0] == QIntValidator.Acceptable
+
+        if factor_valid:
+            self.ok_button.setEnabled(True)
+        else:
+            self.ok_button.setEnabled(False)
+
+    def get_width_height(self):
+        return float(self.factor_input.text()), self.combo_box.currentText().lower()
+
+
+class _RotateInputDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Döndürme derecesi girin (-360 ile 360 arasında reel bir sayı):")
+        self.resize(300, 150)
+
+        layout = QVBoxLayout()
+
+        self.factor_label = QLabel("Derece:")
+        self.factor_input = QLineEdit()
+        self.factor_input.setValidator(QDoubleValidator(-360.0, 360.0, 2))
+
+
+        self.ok_button = QPushButton("Tamam")
+        self.ok_button.clicked.connect(self.accept)
+
+        self.ok_button.setEnabled(False)
+
+        factor_layout = QHBoxLayout()
+        factor_layout.addWidget(self.factor_label)
+        factor_layout.addWidget(self.factor_input)
+
+
+        self.label = QLabel("Enterpolasyon Yöntemi:")
+        self.combo_box = QComboBox()
+        self.combo_box.addItems(["Nearest", "Bilinear", "Bicubic"])
+
+        layout.addLayout(factor_layout)
+        layout.addWidget(self.label)
+        layout.addWidget(self.combo_box)
+        layout.addWidget(self.ok_button)
+
+        self.setLayout(layout)
+
+        self.factor_input.textChanged.connect(self.validate_inputs)
+
+    def validate_inputs(self):
+        factor_valid = self.factor_input.validator().validate(self.factor_input.text(), 0)[0] == QIntValidator.Acceptable
+
+        if factor_valid:
+            self.ok_button.setEnabled(True)
+        else:
+            self.ok_button.setEnabled(False)
+
+    def get_width_height(self):
+        return float(self.factor_input.text()), self.combo_box.currentText().lower()
 
 
 class _GaussianBlurKernelDialog(QDialog):
@@ -390,9 +556,7 @@ class _GaussianBlurKernelDialog(QDialog):
         self.label = QLabel("Kernel Boyu:")
         self.kernel_size = QSpinBox()
 
-        height = image.image_array.shape[0]
-        width = image.image_array.shape[1]
-        max_size = height if width > height else width
+        max_size = image.height if image.width > image.height else image.width
 
         self.kernel_size.setRange(1, max_size)
         self.kernel_size.setSingleStep(2)
@@ -523,17 +687,17 @@ class ImageDetailsWidget(QWidget):
 
         self.image: SImage = None
 
-        self.layout = QVBoxLayout()
-        self.setLayout(self.layout)
+        self.main_layout = QVBoxLayout()
+        self.setLayout(self.main_layout)
 
         self.details_layout = QFormLayout()
-        self.label_size = QLabel("-")
-        self.label_depth = QLabel("-")
+        self.label_size_width = QLabel("-")
+        self.label_size_height = QLabel("-")
 
-        self.details_layout.addRow("Boyut:", self.label_size)
-        self.details_layout.addRow("Renk Derinliği:", self.label_depth)
+        self.details_layout.addRow("Width:", self.label_size_width)
+        self.details_layout.addRow("Height:", self.label_size_height)
 
-        self.layout.addLayout(self.details_layout)
+        self.main_layout.addLayout(self.details_layout)
 
         self.hist_rgb_checkbox_layout = QHBoxLayout()
         self.hist_rgb_cb_gray = QCheckBox("Grayscale")
@@ -556,135 +720,40 @@ class ImageDetailsWidget(QWidget):
         self.hist_rgb_checkbox_layout.addWidget(self.hist_rgb_cb_green)
         self.hist_rgb_checkbox_layout.addWidget(self.hist_rgb_cb_blue)
 
-        self.layout.addLayout(self.hist_rgb_checkbox_layout)
-        self._hide_layout(self.hist_rgb_checkbox_layout)
-
-
-        self.hist_hsv_checkbox_layout = QHBoxLayout()
-        self.hist_hsv_cb_gray = QCheckBox("Grayscale")
-        self.hist_hsv_cb_hue = QCheckBox("Hue")
-        self.hist_hsv_cb_saturation = QCheckBox("Saturation")
-        self.hist_hsv_cb_value = QCheckBox("Value")
-
-        self.hist_hsv_cb_gray.setChecked(True)
-        self.hist_hsv_cb_hue.setChecked(True)
-        self.hist_hsv_cb_saturation.setChecked(True)
-        self.hist_hsv_cb_value.setChecked(True)
-
-        self.hist_hsv_cb_gray.stateChanged.connect(self.update_histogram)
-        self.hist_hsv_cb_hue.stateChanged.connect(self.update_histogram)
-        self.hist_hsv_cb_saturation.stateChanged.connect(self.update_histogram)
-        self.hist_hsv_cb_value.stateChanged.connect(self.update_histogram)
-
-        self.hist_hsv_checkbox_layout.addWidget(self.hist_hsv_cb_gray)
-        self.hist_hsv_checkbox_layout.addWidget(self.hist_hsv_cb_hue)
-        self.hist_hsv_checkbox_layout.addWidget(self.hist_hsv_cb_saturation)
-        self.hist_hsv_checkbox_layout.addWidget(self.hist_hsv_cb_value)
-
-        self.layout.addLayout(self.hist_hsv_checkbox_layout)
-        self._hide_layout(self.hist_hsv_checkbox_layout)
-
+        self.main_layout.addLayout(self.hist_rgb_checkbox_layout)
 
         self.figure = Figure(figsize=(16,3))
         self.canvas = FigureCanvas(self.figure)
-        self.layout.addWidget(self.canvas)
+        self.main_layout.addWidget(self.canvas)
         
     def update_details(self):
-        if self.image is None or self.image.image_array.size == 0:
+        if self.image is None or self.image.R_matrix.rows == 0:
             return
         
-        height, width = self.image.image_array.shape[:2]
-        channels = self.image.image_array.shape[2] if len(self.image.image_array.shape) == 3 else 1
-        bit_depth = self.image.image_array.dtype.itemsize * 8
+        self.label_size_width.setText(str(self.image.width))
+        self.label_size_height.setText(str(self.image.height))
 
-        self.label_size.setText(f"{width} x {height}")
-        self.label_depth.setText(f"{bit_depth * channels}-bit")
 
     def update_histogram(self):
-        if self.image is None or self.image.image_array.size == 0:
+        
+        if self.image is None or self.image.R_matrix.rows == 0 or self.image.R_matrix.cols == 0:
             return
 
-        if self.image.color_space == "rgb":
-            self._hide_layout(self.hist_hsv_checkbox_layout)
-            self._show_layout(self.hist_rgb_checkbox_layout)
+        hist_r, hist_g, hist_b, hist_gray = self.image.calculate_histogram()
 
-            gray_img = cv2.cvtColor(self.image.image_array, cv2.COLOR_RGB2GRAY)
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
 
-            hist_gray = cv2.calcHist([gray_img], [0], None, [256], [0, 256]).flatten()
-            hist_blue = cv2.calcHist([self.image.image_array[:, :, 0]], [0], None, [256], [0, 256]).flatten()
-            hist_green = cv2.calcHist([self.image.image_array[:, :, 1]], [0], None, [256], [0, 256]).flatten()
-            hist_red = cv2.calcHist([self.image.image_array[:, :, 2]], [0], None, [256], [0, 256]).flatten()
-
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-
-            if self.hist_rgb_cb_gray.isChecked():
-                ax.fill_between(range(256), hist_gray, color="black", alpha=0.25)
-            if self.hist_rgb_cb_red.isChecked():
-                ax.fill_between(range(256), hist_red, color="red", alpha=0.25)
-            if self.hist_rgb_cb_green.isChecked():
-                ax.fill_between(range(256), hist_green, color="green", alpha=0.25)
-            if self.hist_rgb_cb_blue.isChecked():
-                ax.fill_between(range(256), hist_blue, color="blue", alpha=0.25)
-            
-            ax.set_title("Histogram")
-            ax.set_xlim([0, 255])
-            self.canvas.draw()
-            
-        elif self.image.color_space == "hsv":
-            self._hide_layout(self.hist_rgb_checkbox_layout)
-            self._show_layout(self.hist_hsv_checkbox_layout)
-
-            if (self.hist_hsv_checkbox_layout.parentWidget() is None):
-                self.layout.addLayout(self.hist_hsv_checkbox_layout)
-            
-            gray_img = cv2.cvtColor(self.image.image_array, cv2.COLOR_HSV2RGB)
-            gray_img = cv2.cvtColor(gray_img, cv2.COLOR_RGB2GRAY)
-
-            hist_gray = cv2.calcHist([gray_img], [0], None, [256], [0, 256]).flatten()
-            hist_hue = cv2.calcHist([self.image.image_array[:, :, 0]], [0], None, [256], [0, 256]).flatten()
-            hist_sat = cv2.calcHist([self.image.image_array[:, :, 1]], [0], None, [256], [0, 256]).flatten()
-            hist_val = cv2.calcHist([self.image.image_array[:, :, 2]], [0], None, [256], [0, 256]).flatten()
-
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-
-            if self.hist_hsv_cb_gray.isChecked():
-                ax.fill_between(range(256), hist_gray, color="black", alpha=0.25)
-            if self.hist_hsv_cb_hue.isChecked():
-                ax.fill_between(range(256), hist_hue, color="purple", alpha=0.25)
-            if self.hist_hsv_cb_saturation.isChecked():
-                ax.fill_between(range(256), hist_sat, color="yellow", alpha=0.25)
-            if self.hist_hsv_cb_value.isChecked():
-                ax.fill_between(range(256), hist_val, color="blue", alpha=0.25)
-
-            ax.set_title("Histogram")
-            ax.set_xlim([0, 255])
-            self.canvas.draw()
-
-        elif self.image.color_space == "gray":
-            self._hide_layout(self.hist_rgb_checkbox_layout)
-            self._hide_layout(self.hist_hsv_checkbox_layout)
-
-            hist_gray = cv2.calcHist([self.image.image_array], [0], None, [256], [0, 256]).flatten()
-
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
+        if self.hist_rgb_cb_gray.isChecked():
             ax.fill_between(range(256), hist_gray, color="black", alpha=0.25)
-            ax.set_title("Histogram")
-            ax.set_xlim([0, 255])
-            self.canvas.draw()
+        if self.hist_rgb_cb_red.isChecked():
+            ax.fill_between(range(256), hist_r, color="red", alpha=0.25)
+        if self.hist_rgb_cb_green.isChecked():
+            ax.fill_between(range(256), hist_g, color="green", alpha=0.25)
+        if self.hist_rgb_cb_blue.isChecked():
+            ax.fill_between(range(256), hist_b, color="blue", alpha=0.25)
         
-    def _hide_layout(self, layout):
-        for i in range(layout.count()):
-            item = layout.itemAt(i)
-            widget = item.widget()
-            if widget:
-                widget.hide()
+        ax.set_title("Histogram")
+        ax.set_xlim((0, 255))
+        self.canvas.draw()
 
-    def _show_layout(self, layout):
-        for i in range(layout.count()):
-            item = layout.itemAt(i)
-            widget = item.widget()
-            if widget:
-                widget.show()

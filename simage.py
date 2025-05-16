@@ -1,95 +1,440 @@
 import numpy as np
 import cv2
-
+import copy
+from PyQt5.QtGui import QImage
+from smatrix import SMatrix
+import math
 
 class SImage():
-    def __init__(self, image_array: np.ndarray, color_space: str):
-        self.color_space = color_space
-        self.image_array = image_array
-    
+    def __init__(self, image_array: np.ndarray):
+        self.R_matrix = SMatrix.from_nparray(image_array[:, :, 0])
+        self.G_matrix = SMatrix.from_nparray(image_array[:, :, 1])
+        self.B_matrix = SMatrix.from_nparray(image_array[:, :, 2])
+        self.height, self.width = image_array.shape[:2]
+
     @classmethod
-    def from_file_path(cls, file_path: str, color_space: str):
+    def new_empty_image(cls, width: int, height: int):
+        image_array = np.ones((height, width, 3), dtype=np.uint8) * 255;
+        return cls(image_array)
+
+    @classmethod
+    def from_file_path(cls, file_path: str):
         img = cv2.imread(file_path)
         
         if img is None:
             raise FileNotFoundError(f"Could not read the file: {file_path}")
 
-        color_space = color_space.lower()
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        if color_space == "rgb":
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        elif color_space == "gray":
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        elif color_space == "hsv":
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        else:
-            raise ValueError(f"Invalid or unsupported color space: {color_space}")
-        
         image_array = np.array(img)
-        return cls(image_array, color_space)
-            
-    def change_color_space(self, to: str):
-        to = to.lower()
+        return cls(image_array)
+    
 
-        if to == "rgb":
-            if self.color_space == "rgb":
-                img = self.image_array
-            elif self.color_space == "hsv":
-                img = cv2.cvtColor(self.image_array, cv2.COLOR_HSV2RGB)
-            elif self.color_space == "gray":
-                img = cv2.cvtColor(self.image_array, cv2.COLOR_GRAY2RGB)
-            
-        elif to == "hsv":
-            if self.color_space == "hsv":
-                img = self.image_array
-            elif self.color_space == "rgb":
-                img = cv2.cvtColor(self.image_array, cv2.COLOR_RGB2HSV)
-            elif self.color_space == "gray":
-                i = cv2.cvtColor(self.image_array, cv2.COLOR_GRAY2RGB)
-                img = cv2.cvtColor(i, cv2.COLOR_RGB2HSV)
-            
-        elif to == "gray":
-            if self.color_space == "gray":
-                img = self.image_array
-            elif self.color_space == "hsv":
-                i = cv2.cvtColor(self.image_array, cv2.COLOR_HSV2RGB)
-                img = cv2.cvtColor(i, cv2.COLOR_RGB2GRAY)
-            elif self.color_space == "rgb":
-                img = cv2.cvtColor(self.image_array, cv2.COLOR_RGB2GRAY)
-            
+    def as_nparray(self):
+        height, width = self.R_matrix.shape
+        image_array = np.zeros((height, width, 3), dtype=np.uint8)
+
+        for i in range(height):
+            for j in range(width):
+                image_array[i][j][0] = self.R_matrix[i, j]
+                image_array[i][j][1] = self.G_matrix[i, j]
+                image_array[i][j][2] = self.B_matrix[i, j]
+
+        return image_array
+
+
+    def as_qimage(self):
+        np_arr = self.as_nparray()
+        height, width, _ = np_arr.shape
+        bytes_per_line = 3 * width
+        return QImage(np_arr, width, height, bytes_per_line, QImage.Format_RGB888) # type: ignore
+
+
+    def calculate_histogram(self):
+        r_vals = [0] * 256
+        g_vals = [0] * 256
+        b_vals = [0] * 256
+        gray_vals = [0] * 256
+        
+        for i in range(self.R_matrix.rows):
+            for j in range(self.R_matrix.cols):
+                r_vals[self.R_matrix[i, j]] += 1
+                g_vals[self.G_matrix[i, j]] += 1
+                b_vals[self.B_matrix[i, j]] += 1
+                gray_vals[int((self.R_matrix[i, j] * 0.2989 + self.G_matrix[i, j] * 0.5870 + self.B_matrix[i, j] * 0.1140))] += 1
+        
+        return r_vals, g_vals, b_vals, gray_vals
+
+
+    def resize(self, width, height, interpolation=["nearest", "bilinear", "bicubic"], in_place=False):
+        new_img = SImage.new_empty_image(width, height)
+
+        if interpolation == "nearest":
+            for i in range(height):
+                for j in range(width):
+                    x = min(int(i * self.R_matrix.rows / height), self.height - 1)
+                    y = min(int(j * self.R_matrix.cols / width), self.width - 1)
+                    new_img.R_matrix[i, j] = self.R_matrix[x, y]
+                    new_img.G_matrix[i, j] = self.G_matrix[x, y]
+                    new_img.B_matrix[i, j] = self.B_matrix[x, y]
+
+        elif interpolation == "bilinear":
+            for i in range(height):
+                for j in range(width):
+                    x = i * self.R_matrix.rows / height if height > 1 else 0
+                    y = j * self.R_matrix.cols / width if width > 1 else 0
+                    x1, y1 = int(x), int(y)
+                    x2, y2 = min(x1 + 1, self.R_matrix.rows - 1), min(y1 + 1, self.R_matrix.cols - 1)
+
+                    a = x - x1
+                    b = y - y1
+
+                    new_img.R_matrix[i, j] = min(int(self.R_matrix[x1, y1] * (1 - a) * (1 - b) +
+                                               self.R_matrix[x2, y1] * a * (1 - b) +
+                                               self.R_matrix[x1, y2] * (1 - a) * b +
+                                               self.R_matrix[x2, y2] * a * b), 255)
+
+                    new_img.G_matrix[i, j] = min(int(self.G_matrix[x1, y1] * (1 - a) * (1 - b) +
+                                               self.G_matrix[x2, y1] * a * (1 - b) +
+                                               self.G_matrix[x1, y2] * (1 - a) * b +
+                                               self.G_matrix[x2, y2] * a * b), 255)
+
+                    new_img.B_matrix[i, j] = min(int(self.B_matrix[x1, y1] * (1 - a) * (1 - b) +
+                                               self.B_matrix[x2, y1] * a * (1 - b) +
+                                               self.B_matrix[x1, y2] * (1 - a) * b +
+                                               self.B_matrix[x2, y2] * a * b), 255)
+        elif interpolation == "bicubic":
+            for i in range(height):
+                for j in range(width):
+                    src_x = i * (self.R_matrix.rows - 1) / (height - 1) if height > 1 else 0
+                    src_y = j * (self.R_matrix.cols - 1) / (width - 1) if width > 1 else 0
+
+                    x0 = int(src_x)
+                    y0 = int(src_y)
+                    x1 = min(x0 + 1, self.R_matrix.rows - 1)
+                    y1 = min(y0 + 1, self.R_matrix.cols - 1)
+
+                    dx = src_x - x0
+                    dy = src_y - y0
+
+                    r00 = self.R_matrix[x0, y0]
+                    r01 = self.R_matrix[x0, y1]
+                    r10 = self.R_matrix[x1, y0]
+                    r11 = self.R_matrix[x1, y1]
+                    new_img.R_matrix[i, j] = int(
+                        r00 * (1 - dx) * (1 - dy) +
+                        r10 * dx * (1 - dy) +
+                        r01 * (1 - dx) * dy +
+                        r11 * dx * dy
+                    )
+
+                    g00 = self.G_matrix[x0, y0]
+                    g01 = self.G_matrix[x0, y1]
+                    g10 = self.G_matrix[x1, y0]
+                    g11 = self.G_matrix[x1, y1]
+                    new_img.G_matrix[i, j] = int(
+                        g00 * (1 - dx) * (1 - dy) +
+                        g10 * dx * (1 - dy) +
+                        g01 * (1 - dx) * dy +
+                        g11 * dx * dy
+                    )
+
+                    b00 = self.B_matrix[x0, y0]
+                    b01 = self.B_matrix[x0, y1]
+                    b10 = self.B_matrix[x1, y0]
+                    b11 = self.B_matrix[x1, y1]
+                    new_img.B_matrix[i, j] = int(
+                        b00 * (1 - dx) * (1 - dy) +
+                        b10 * dx * (1 - dy) +
+                        b01 * (1 - dx) * dy +
+                        b11 * dx * dy
+                    )
         else:
-            raise Exception("Invalid or unsupported color space was given.")
-        
-        return SImage(img, to)
-
-    def apply_binary_thresholding(self, threshold_value, max_value, in_place=False): 
-        gray_img = self.change_color_space("gray")
-        _, thresholded_image = cv2.threshold(gray_img.image_array, threshold_value, max_value, cv2.THRESH_BINARY)
-
-        thresholded_image = np.array(thresholded_image)
+            raise ValueError("Invalid interpolation method. Choose from 'nearest', 'bilinear', or 'bicubic'.")
 
         if in_place:
-            self.image_array = thresholded_image
-            self.color_space = "gray"
-        
-        return SImage(thresholded_image, "gray")
+            self.R_matrix = new_img.R_matrix
+            self.G_matrix = new_img.G_matrix
+            self.B_matrix = new_img.B_matrix
+            self.height = new_img.height
+            self.width = new_img.width
 
-    def apply_gaussian_blur(self, kernel: tuple, in_place=False):
-        blurred_img = cv2.GaussianBlur(self.change_color_space("rgb").image_array, kernel, 0)
+        return new_img
 
-        blurred_img = np.array(blurred_img)
+
+    def zoom(self, zoom_factor: float, interpolation=["nearest", "bilinear", "bicubic"], in_place=False):
+        if zoom_factor <= 0 or zoom_factor > 2:
+            raise ValueError("Invalid zoom factor. Zoom factor must be in range (0, 2].")
+
+        if zoom_factor < 1:
+            new_height = self.height
+            new_width = self.width
+
+            small_h = max(1, int(self.height * zoom_factor))
+            small_w = max(1, int(self.width * zoom_factor))
+
+            small_img = self.resize(small_w, small_h, interpolation)
+
+            new_img = SImage.new_empty_image(new_width, new_height)
+
+            start_i = (new_height - small_h) // 2
+            start_j = (new_width - small_w) // 2
+
+            for i in range(small_h):
+                for j in range(small_w):
+                    new_img.R_matrix[start_i + i, start_j + j] = small_img.R_matrix[i, j]
+                    new_img.G_matrix[start_i + i, start_j + j] = small_img.G_matrix[i, j]
+                    new_img.B_matrix[start_i + i, start_j + j] = small_img.B_matrix[i, j]
+
+        else:
+            scaled_width = int(self.width * zoom_factor)
+            scaled_height = int(self.height * zoom_factor)
+            scaled_image = self.resize(scaled_width, scaled_height, interpolation)
+
+            x0 = (scaled_width - self.width) // 2
+            y0 = (scaled_height - self.height) // 2
+
+            new_img = SImage.new_empty_image(self.width, self.height)
+            for i in range(self.height):
+                for j in range(self.width):
+                    new_img.R_matrix[i, j] = scaled_image.R_matrix[y0 + i, x0 + j]
+                    new_img.G_matrix[i, j] = scaled_image.G_matrix[y0 + i, x0 + j]
+                    new_img.B_matrix[i, j] = scaled_image.B_matrix[y0 + i, x0 + j]
 
         if in_place:
-            self.image_array = blurred_img
+            self.R_matrix = new_img.R_matrix
+            self.G_matrix = new_img.G_matrix
+            self.B_matrix = new_img.B_matrix
+            self.height = new_img.height
+            self.width = new_img.width
+
+        return new_img
+
+
+    def rotate(self, angle, is_in_degrees=False, interpolation=["nearest", "bilinear", "bicubic"], in_place=False):
+        if is_in_degrees:
+            angle = angle / 180 * math.pi
+
+        cos_theta = math.cos(angle)
+        sin_theta = math.sin(angle)
+
+        cx = self.width / 2
+        cy = self.height / 2
+
+        new_img = SImage.new_empty_image(self.width, self.height)
+
+        for i in range(self.height):
+            for j in range(self.width):
+                x = j - cx
+                y = i - cy
+
+                x_rot = x * cos_theta - y * sin_theta
+                y_rot = x * sin_theta + y * cos_theta
+
+                src_x = x_rot + cx
+                src_y = y_rot + cy
+
+                if interpolation == "nearest":
+                    sx = int(round(src_y))
+                    sy = int(round(src_x))
+                    if 0 <= sx < self.height and 0 <= sy < self.width:
+                        new_img.R_matrix[i, j] = self.R_matrix[sx, sy]
+                        new_img.G_matrix[i, j] = self.G_matrix[sx, sy]
+                        new_img.B_matrix[i, j] = self.B_matrix[sx, sy]
+
+                elif interpolation == "bilinear":
+                    x1 = int(src_y)
+                    y1 = int(src_x)
+                    x2 = min(x1 + 1, self.height - 1)
+                    y2 = min(y1 + 1, self.width - 1)
+
+                    a = src_y - x1
+                    b = src_x - y1
+
+                    if 0 <= x1 < self.height and 0 <= y1 < self.width:
+                        def interp(channel, x1, x2, y1, y2, a, b):
+                            return (
+                                channel[x1, y1] * (1 - a) * (1 - b) +
+                                channel[x2, y1] * a * (1 - b) +
+                                channel[x1, y2] * (1 - a) * b +
+                                channel[x2, y2] * a * b
+                            )
+
+                        new_img.R_matrix[i, j] = min(int(interp(self.R_matrix, x1, x2, y1, y2, a, b)), 255)
+                        new_img.G_matrix[i, j] = min(int(interp(self.G_matrix, x1, x2, y1, y2, a, b)), 255)
+                        new_img.B_matrix[i, j] = min(int(interp(self.B_matrix, x1, x2, y1, y2, a, b)), 255)
+
+                elif interpolation == "bicubic":
+                    x = src_y
+                    y = src_x
+                    ix = int(x)
+                    iy = int(y)
+
+                    if 1 <= ix < self.height - 2 and 1 <= iy < self.width - 2:
+                        def cubic(t):
+                            t = abs(t)
+                            if t <= 1:
+                                return 1 - 2 * t * t + t * t * t
+                            elif t < 2:
+                                return 4 - 8 * t + 5 * t * t - t * t * t
+                            return 0
+
+                        def bicubic(channel, x, y):
+                            value = 0
+                            for m in range(-1, 3):
+                                for n in range(-1, 3):
+                                    xm = ix + m
+                                    yn = iy + n
+                                    if 0 <= xm < self.height and 0 <= yn < self.width:
+                                        weight = cubic(m - (x - ix)) * cubic(n - (y - iy))
+                                        value += channel[xm, yn] * weight
+                            return max(0, min(int(value), 255))
+
+                        new_img.R_matrix[i, j] = bicubic(self.R_matrix, x, y)
+                        new_img.G_matrix[i, j] = bicubic(self.G_matrix, x, y)
+                        new_img.B_matrix[i, j] = bicubic(self.B_matrix, x, y)
+                else:
+                    raise ValueError("Invalid interpolation method. Choose from 'nearest', 'bilinear', or 'bicubic'.")
+
+        if in_place:
+            self.R_matrix = new_img.R_matrix
+            self.G_matrix = new_img.G_matrix
+            self.B_matrix = new_img.B_matrix
+
+        return new_img
+
+
+    def apply_grayscale(self, in_place=False):
+        new_img = SImage.new_empty_image(self.width, self.height)
+
+        gray_matrix = SMatrix(self.R_matrix.rows, self.R_matrix.cols)
+
+        for i in range(self.R_matrix.rows):
+            for j in range(self.R_matrix.cols):
+                gray_value = int((self.R_matrix[i, j] * 0.2989 + self.G_matrix[i, j] * 0.5870 + self.B_matrix[i, j] * 0.1140))
+                gray_matrix[i, j] = gray_value
         
-        return SImage(blurred_img, "rgb")
+        gray_matrix = gray_matrix // 3
+        new_img.R_matrix = copy.deepcopy(gray_matrix)
+        new_img.G_matrix = copy.deepcopy(gray_matrix)
+        new_img.B_matrix = copy.deepcopy(gray_matrix)
+
+        if in_place:
+            self.R_matrix = new_img.R_matrix
+            self.G_matrix = new_img.G_matrix
+            self.B_matrix = new_img.B_matrix
+        
+        return new_img
+
+
+    def apply_binary_thresholding(self, threshold, max_value=255, in_place=False): 
+        new_img = SImage.new_empty_image(self.width, self.height)
+
+        for i in range(self.height):
+            for j in range(self.width):
+                new_img.R_matrix[i, j] = max_value if self.R_matrix[i, j] >= threshold else 0
+                new_img.G_matrix[i, j] = max_value if self.G_matrix[i, j] >= threshold else 0
+                new_img.B_matrix[i, j] = max_value if self.B_matrix[i, j] >= threshold else 0
+
+        if in_place:
+            self.R_matrix = new_img.R_matrix
+            self.G_matrix = new_img.G_matrix
+            self.B_matrix = new_img.B_matrix
+        
+        return new_img
+
+
+    def apply_gaussian_blur(self, kernel: int, in_place=False):
+        import math
+
+        def create_gaussian_kernel(size, sigma=None):
+            if size % 2 == 0:
+                raise ValueError("Size must be an odd number.")
+
+            if sigma is None:
+                sigma = size / 6
+
+            offset = size // 2
+            kernel = SMatrix(size, size)
+
+            sum_val = 0.0
+
+            for i in range(size):
+                for j in range(size):
+                    x = i - offset
+                    y = j - offset
+                    exponent = -(x**2 + y**2) / (2 * sigma**2)
+                    value = (1 / (2 * math.pi * sigma**2)) * math.exp(exponent)
+                    kernel[i, j] = value
+                    sum_val += value
+
+            for i in range(size):
+                for j in range(size):
+                    kernel[i, j] /= sum_val
+
+            return kernel
+
+        kernel_mat = create_gaussian_kernel(kernel)
+        new_img = SImage.new_empty_image(self.width, self.height)
+
+        new_img.R_matrix = self.R_matrix.convolve(kernel_mat)
+        new_img.G_matrix = self.G_matrix.convolve(kernel_mat)
+        new_img.B_matrix = self.B_matrix.convolve(kernel_mat)
+
+        if in_place:
+            self.R_matrix = new_img.R_matrix
+            self.G_matrix = new_img.G_matrix
+            self.B_matrix = new_img.B_matrix
+
+        return new_img
+    
 
     def apply_histogram_equalizer(self, in_place=False):
-        equalized_img = cv2.equalizeHist(self.image_array)
+        new_img = SImage.new_empty_image(self.width, self.height)
 
-        equalized_img = np.array(equalized_img)
+        new_img.R_matrix = self._equalize_channel(self.R_matrix)
+        new_img.G_matrix = self._equalize_channel(self.G_matrix)
+        new_img.B_matrix = self._equalize_channel(self.B_matrix)
 
         if in_place:
-            self.image_array = equalized_img
+            self.R_matrix = new_img.R_matrix
+            self.G_matrix = new_img.G_matrix
+            self.B_matrix = new_img.B_matrix
+
+        return new_img
+
+    @staticmethod
+    def _equalize_channel(channel):
+        height = channel.rows
+        width = channel.cols
+
+        pixels = [channel[i, j] for i in range(height) for j in range(width)]
+
+        hist = [0] * 256
+        for p in pixels:
+            hist[p] += 1
+
+        cdf = [0] * 256
+        cdf[0] = hist[0]
+        for i in range(1, 256):
+            cdf[i] = cdf[i - 1] + hist[i]
+
+        cdf_min = next((x for x in cdf if x > 0), None)
+        if cdf_min is None:
+            return channel.copy()  # If all values are 0
+
+        total_pixels = height * width
+        denominator = total_pixels - cdf_min
+        if denominator == 0:
+            denominator = 1
+
+        lut = [int((cdf[i] - cdf_min) / denominator * 255) for i in range(256)]
+        lut = [max(0, min(255, v)) for v in lut]
+
+        new_channel = channel.copy()
+        for i in range(height):
+            for j in range(width):
+                new_channel[i, j] = lut[channel[i, j]]
+
+        return new_channel
         
-        return SImage(equalized_img, self.color_space)
