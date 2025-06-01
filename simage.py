@@ -636,15 +636,37 @@ class SImage():
         new_img.G_matrix = copy.deepcopy(self.G_matrix)
         new_img.B_matrix = copy.deepcopy(self.B_matrix)
 
+        kernel = SMatrix(3, 3)
+        kernel[0, 0] = 1
+        kernel[1, 0] = 1
+        kernel[2, 0] = 1
+        kernel[0, 1] = 1
+        kernel[1, 1] = -8
+        kernel[2, 1] = 1
+        kernel[0, 2] = 1
+        kernel[1, 2] = 1
+        kernel[2, 2] = 1
+        temp_img = new_img.apply_s_curve("custom")
+        temp_img.R_matrix = temp_img.R_matrix.convolve(kernel)
+        temp_img.G_matrix = temp_img.G_matrix.convolve(kernel)
+        temp_img.B_matrix = temp_img.B_matrix.convolve(kernel)
+
+        temp_img = temp_img.apply_binary_thresholding(200)
+
+        new_img.R_matrix += temp_img.R_matrix
+        new_img.G_matrix += temp_img.G_matrix
+        new_img.B_matrix += temp_img.B_matrix
+
         blurred_img = new_img.apply_gaussian_blur(5)
 
         detail_mask = SImage.new_empty_image(self.width, self.height)
         detail_mask.R_matrix = (new_img.R_matrix - blurred_img.R_matrix).multiply_by_scalar(factor, True)
         detail_mask.G_matrix = (new_img.G_matrix - blurred_img.G_matrix).multiply_by_scalar(factor, True)
         detail_mask.B_matrix = (new_img.B_matrix - blurred_img.B_matrix).multiply_by_scalar(factor, True)
-
         
         sharpened_img = new_img + detail_mask
+
+
 
         for i in range(sharpened_img.height):
             for j in range(sharpened_img.width):
@@ -662,7 +684,7 @@ class SImage():
                     sharpened_img.B_matrix[i, j] = 0
                 elif sharpened_img.B_matrix[i, j] > 255:
                     sharpened_img.B_matrix[i, j] = 255
-
+        
         return sharpened_img
 
 
