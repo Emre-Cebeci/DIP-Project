@@ -119,7 +119,7 @@ class MainWindow(QMainWindow):
         self.apply_deblur_action.setDisabled(True)
         self.apply_deblur_action.triggered.connect(self.apply_deblur)
 
-        self.extract_features_action = QAction("Özellik Çıkart")
+        self.extract_features_action = QAction("Özellik Çıkar")
         self.extract_features_action.setDisabled(True)
         self.extract_features_action.triggered.connect(self.extract_features)
 
