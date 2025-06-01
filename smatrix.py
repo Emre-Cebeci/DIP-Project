@@ -145,6 +145,18 @@ class SMatrix():
         else:
             raise TypeError("Unsupported operand type for ==: 'SMatrix' and '{}'".format(type(other).__name__))
     
+
+    def multiply_by_scalar(self, scalar, is_int=False):
+        if is_int:
+            for i in range(self.rows):
+                for j in range(self.cols):
+                    self[i, j] = int(self[i, j] * scalar)
+        else:
+            for i in range(self.rows):
+                for j in range(self.cols):
+                    self[i, j] *= scalar
+        return self
+
     
     def copy(self):
         new_matrix = SMatrix(self.rows, self.cols)

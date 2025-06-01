@@ -365,9 +365,17 @@ class MainWindow(QMainWindow):
 
 
     def apply_deblur(self):
-        self.original_image = self.current_image
-        img = self.current_image.deblur()
-        self.load_image(img)
+        dialog = _DeblurInputDialog(self)
+
+        if dialog.exec():
+            factor = dialog.get_factor()
+
+            if factor is None:
+                return
+
+            self.original_image = self.current_image
+            img = self.current_image.deblur(factor)
+            self.load_image(img)
 
 
     def extract_features(self):
@@ -767,6 +775,47 @@ class _ControlsDialog(QDialog):
         self.setLayout(layout)
 
 
+class _DeblurInputDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Deblur Katsayısı Girin")
+        self.resize(300, 150)
+
+        layout = QVBoxLayout()
+
+        self.factor_label = QLabel("Katsayı:")
+        self.factor_input = QLineEdit()
+        self.factor_input.setValidator(QDoubleValidator(0.01, 100, 2))
+
+
+        self.ok_button = QPushButton("Tamam")
+        self.ok_button.clicked.connect(self.accept)
+
+        self.ok_button.setEnabled(False)
+
+        factor_layout = QHBoxLayout()
+        factor_layout.addWidget(self.factor_label)
+        factor_layout.addWidget(self.factor_input)
+
+        layout.addLayout(factor_layout)
+        layout.addWidget(self.ok_button)
+
+        self.setLayout(layout)
+
+        self.factor_input.textChanged.connect(self.validate_inputs)
+
+    def validate_inputs(self):
+        factor_valid = self.factor_input.validator().validate(self.factor_input.text(), 0)[0] == QIntValidator.Acceptable
+
+        if factor_valid:
+            self.ok_button.setEnabled(True)
+        else:
+            self.ok_button.setEnabled(False)
+
+    def get_factor(self):
+        return float(self.factor_input.text())
+
+
 class _FeatureExtractionCompleteDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -784,6 +833,7 @@ class _FeatureExtractionCompleteDialog(QDialog):
         layout.addWidget(self.ok_button)
 
         self.setLayout(layout)
+
 
 class DraggableImageView(QGraphicsView):
     def __init__(self):

@@ -16,6 +16,26 @@ class SImage():
         self.height, self.width = image_array.shape[:2]
 
 
+    def __add__(self, other):
+        if isinstance(other, SImage):
+
+            if self.width != other.width or self.height != other.height:
+                raise ValueError("Images must have the same shape to add.")
+            
+            result = SImage.new_empty_image(self.width, self.height)
+
+            for i in range(self.height):
+                for j in range(self.width):
+                    result.R_matrix[i, j] = self.R_matrix[i ,j] + other.R_matrix[i, j]
+                    result.G_matrix[i, j] = self.G_matrix[i ,j] + other.G_matrix[i, j]
+                    result.B_matrix[i, j] = self.B_matrix[i ,j] + other.B_matrix[i, j] 
+            
+            return result
+        
+        else:
+            raise TypeError("Unsupported operand type for +: 'SImage' and '{}'".format(type(other).__name__))
+
+
     @classmethod
     def new_empty_image(cls, width: int, height: int):
         image_array = np.ones((height, width, 3), dtype=np.uint8) * 255;
@@ -470,14 +490,14 @@ class SImage():
         thetas = [math.radians(theta) for theta in range(0, 180, 1)]
         max_dist = int(math.hypot(new_img.width, new_img.height))
         
-        accumulator = defaultdict(int)  # (rho_index, theta_index) -> count
+        accumulator = defaultdict(int)
 
         for y in range(new_img.height):
             for x in range(new_img.width):
                 if new_img.R_matrix[y, x] + new_img.B_matrix[y, x]  + new_img.B_matrix[y, x] > 300:
                     for theta_idx, theta in enumerate(thetas):
                         rho = int(x * math.cos(theta) + y * math.sin(theta))
-                        rho_idx = rho + max_dist  # Offset to make it non-negative
+                        rho_idx = rho + max_dist
                         accumulator[(rho_idx, theta_idx)] += 1
 
         lines = []
@@ -503,30 +523,29 @@ class SImage():
 
         new_img.apply_grayscale(True)
         new_img.apply_gaussian_blur(5, True)
-        sobel_kernel = SMatrix(3, 3)
-        sobel_kernel[0, 0] = 1
-        sobel_kernel[1, 0] = 1
-        sobel_kernel[2, 0] = 1
-        sobel_kernel[0, 1] = 1
-        sobel_kernel[1, 1] = -8
-        sobel_kernel[2, 1] = 1
-        sobel_kernel[0, 2] = 1
-        sobel_kernel[1, 2] = 1
-        sobel_kernel[2, 2] = 1
-        new_img.R_matrix = new_img.R_matrix.convolve(sobel_kernel)
-        new_img.G_matrix = new_img.G_matrix.convolve(sobel_kernel)
-        new_img.B_matrix = new_img.B_matrix.convolve(sobel_kernel)
+        kernel = SMatrix(3, 3)
+        kernel[0, 0] = 1
+        kernel[1, 0] = 1
+        kernel[2, 0] = 1
+        kernel[0, 1] = 1
+        kernel[1, 1] = -8
+        kernel[2, 1] = 1
+        kernel[0, 2] = 1
+        kernel[1, 2] = 1
+        kernel[2, 2] = 1
+        new_img.R_matrix = new_img.R_matrix.convolve(kernel)
+        new_img.G_matrix = new_img.G_matrix.convolve(kernel)
+        new_img.B_matrix = new_img.B_matrix.convolve(kernel)
         new_img.apply_s_curve("sigmoid", {"shift": -0.5, "steep": 5}, True)
         new_img.apply_binary_thresholding(30, 255, True)
 
-        #new_img.apply_histogram_equalizer(True)
         accumulator = defaultdict(int)
         height, width = new_img.height, new_img.width
         thetas = [math.radians(t) for t in range(0, 360, 5)]
 
         small_size = self.width if self.width < self.height else self.height
         
-        radius_range = small_size // 50, small_size // 5
+        radius_range = self.width // 40, self.width // 5
         step = (radius_range[1] - radius_range[0]) // 15
 
         for y in range(height):
@@ -611,39 +630,40 @@ class SImage():
             self.R_matrix[y2, x2] = value
 
 
-    def deblur(self):
+    def deblur(self, factor):
         new_img = SImage.new_empty_image(self.width, self.height)
         new_img.R_matrix = copy.deepcopy(self.R_matrix)
         new_img.G_matrix = copy.deepcopy(self.G_matrix)
         new_img.B_matrix = copy.deepcopy(self.B_matrix)
 
-        sobel_kernel = SMatrix(3, 3)
-        sobel_kernel[0, 0] = 1
-        sobel_kernel[1, 0] = 1
-        sobel_kernel[2, 0] = 1
-        sobel_kernel[0, 1] = 1
-        sobel_kernel[1, 1] = -8
-        sobel_kernel[2, 1] = 1
-        sobel_kernel[0, 2] = 1
-        sobel_kernel[1, 2] = 1
-        sobel_kernel[2, 2] = 1
-        new_img.R_matrix = new_img.R_matrix.convolve(sobel_kernel)
-        new_img.G_matrix = new_img.G_matrix.convolve(sobel_kernel)
-        new_img.B_matrix = new_img.B_matrix.convolve(sobel_kernel)
-        new_img.apply_binary_thresholding(True)
+        blurred_img = new_img.apply_gaussian_blur(5)
 
-        new_img2 = SImage.new_empty_image(self.width, self.height)
-        new_img2.R_matrix = copy.deepcopy(self.R_matrix)
-        new_img2.G_matrix = copy.deepcopy(self.G_matrix)
-        new_img2.B_matrix = copy.deepcopy(self.B_matrix)
+        detail_mask = SImage.new_empty_image(self.width, self.height)
+        detail_mask.R_matrix = (new_img.R_matrix - blurred_img.R_matrix).multiply_by_scalar(factor, True)
+        detail_mask.G_matrix = (new_img.G_matrix - blurred_img.G_matrix).multiply_by_scalar(factor, True)
+        detail_mask.B_matrix = (new_img.B_matrix - blurred_img.B_matrix).multiply_by_scalar(factor, True)
 
-        for i in range(self.height):
-            for j in range(self.width):
-                new_img2.R_matrix[i, j] = min(self.R_matrix[i, j] + new_img.R_matrix[i, j], 255)
-                new_img2.G_matrix[i, j] = min(self.G_matrix[i, j] + new_img.G_matrix[i, j], 255)
-                new_img2.B_matrix[i, j] = min(self.B_matrix[i, j] + new_img.B_matrix[i, j], 255)
+        
+        sharpened_img = new_img + detail_mask
 
-        return new_img2
+        for i in range(sharpened_img.height):
+            for j in range(sharpened_img.width):
+                if sharpened_img.R_matrix[i, j] < 0:
+                    sharpened_img.R_matrix[i, j] = 0
+                elif sharpened_img.R_matrix[i, j] > 255:
+                    sharpened_img.R_matrix[i, j] = 255
+
+                if sharpened_img.G_matrix[i, j] < 0:
+                    sharpened_img.G_matrix[i, j] = 0
+                elif sharpened_img.G_matrix[i, j] > 255:
+                    sharpened_img.G_matrix[i, j] = 255
+
+                if sharpened_img.B_matrix[i, j] < 0:
+                    sharpened_img.B_matrix[i, j] = 0
+                elif sharpened_img.B_matrix[i, j] > 255:
+                    sharpened_img.B_matrix[i, j] = 255
+
+        return sharpened_img
 
 
     def extract_features(self):
@@ -679,17 +699,15 @@ class SImage():
                                 visited[cy][cx] = True
                                 region_pixels.append((cx, cy))
 
-                                # Güncelle sınırlar
                                 min_x = min(min_x, cx)
                                 max_x = max(max_x, cx)
                                 min_y = min(min_y, cy)
                                 max_y = max(max_y, cy)
 
-                                val = self.G_matrix[cy, cx]  # Orijinal yeşil kanal
+                                val = self.G_matrix[cy, cx]
                                 energy += val * val
                                 histogram[val] += 1
 
-                                # 4-komşuluk
                                 queue.extend([
                                     (cx + 1, cy),
                                     (cx - 1, cy),
@@ -710,7 +728,6 @@ class SImage():
                     mean = sum(values) // len(values)
                     median = sorted(values)[len(values) // 2]
 
-                    # Entropy hesapla
                     total = sum(histogram)
                     entropy = 0
                     for count in histogram:
@@ -749,17 +766,16 @@ class SImage():
         
         return new_img
 
+
     @staticmethod
     def save_features_to_excel(features, filename="ozellikler.xlsx"):
         wb = Workbook()
         ws = wb.active
         ws.title = "Özellikler"
 
-        # Başlıklar
         headers = ["No", "Center", "Length", "Width", "Diagonal", "Energy", "Entropy", "Mean", "Median"]
         ws.append(headers)
 
-        # Veriler
         for i, f in enumerate(features, 1):
             row = [
                 i,
@@ -775,6 +791,8 @@ class SImage():
             ws.append(row)
 
         wb.save(filename)
+    
+    
     @staticmethod
     def _equalize_channel(channel):
         height = channel.rows
@@ -793,7 +811,7 @@ class SImage():
 
         cdf_min = next((x for x in cdf if x > 0), None)
         if cdf_min is None:
-            return channel.copy()  # If all values are 0
+            return channel.copy()
 
         total_pixels = height * width
         denominator = total_pixels - cdf_min
