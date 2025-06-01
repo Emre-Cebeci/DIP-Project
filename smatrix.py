@@ -73,9 +73,10 @@ class SMatrix():
                 for j in range(other.cols):
                     result[i, j] = sum(self[i, k] * other[k, j] for k in range(self.cols))
             return result
-        
         else:
             raise TypeError("Unsupported operand type for *: 'SMatrix' and '{}'".format(type(other).__name__))
+
+
 
 
     def __truediv__(self, scalar):
@@ -105,7 +106,7 @@ class SMatrix():
         
 
     def __str__(self):
-        return "\n".join(["\t".join(map(str, row)) for row in self])
+        return "\n".join(["\t".join(map(str, row)) for row in self.matrix])
 
 
     def __getitem__(self, key):

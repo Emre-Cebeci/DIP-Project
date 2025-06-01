@@ -103,6 +103,26 @@ class MainWindow(QMainWindow):
         self.apply_rotate_action.setDisabled(True)
         self.apply_rotate_action.triggered.connect(self.apply_rotate)
 
+        self.apply_s_curve_action = QAction("S-Curve Uygula")
+        self.apply_s_curve_action.setDisabled(True)
+        self.apply_s_curve_action.triggered.connect(self.apply_s_curve)
+
+        self.find_road_lines_action = QAction("Yol Çizgilerini Tespit Et")
+        self.find_road_lines_action.setDisabled(True)
+        self.find_road_lines_action.triggered.connect(self.find_road_lines)
+
+        self.find_eyes_action = QAction("Gözleri Tespit Et")
+        self.find_eyes_action.setDisabled(True)
+        self.find_eyes_action.triggered.connect(self.find_eyes)
+
+        self.apply_deblur_action = QAction("Deblur")
+        self.apply_deblur_action.setDisabled(True)
+        self.apply_deblur_action.triggered.connect(self.apply_deblur)
+
+        self.extract_features_action = QAction("Özellik Çıkart")
+        self.extract_features_action.setDisabled(True)
+        self.extract_features_action.triggered.connect(self.extract_features)
+
         self.show_controls_action = QAction("Kontroller")
         self.show_controls_action.triggered.connect(self.show_controls)
 
@@ -133,7 +153,13 @@ class MainWindow(QMainWindow):
         self.transform_operations.addAction(self.apply_resize_action)
         self.transform_operations.addAction(self.apply_zoom_action)
         self.transform_operations.addAction(self.apply_rotate_action)
-
+        
+        self.complex_operations = self.menuBar().addMenu("Ödev 3: Kompleks İşlemler")
+        self.complex_operations.addAction(self.apply_s_curve_action)
+        self.complex_operations.addAction(self.find_road_lines_action)
+        self.complex_operations.addAction(self.find_eyes_action)
+        self.complex_operations.addAction(self.apply_deblur_action)
+        self.complex_operations.addAction(self.extract_features_action)
 
         self.help = self.menuBar().addMenu("Yardım")
         self.help.addAction(self.show_controls_action)
@@ -209,7 +235,11 @@ class MainWindow(QMainWindow):
         self.apply_resize_action.setDisabled(False)
         self.apply_zoom_action.setDisabled(False)
         self.apply_rotate_action.setDisabled(False)
-
+        self.apply_s_curve_action.setDisabled(False)
+        self.find_road_lines_action.setDisabled(False)
+        self.find_eyes_action.setDisabled(False)
+        self.apply_deblur_action.setDisabled(False)
+        self.extract_features_action.setDisabled(False)
         self.undo_action.setDisabled(False)
         
     def show_error_dialog(self, message):
@@ -303,6 +333,49 @@ class MainWindow(QMainWindow):
             self.original_image = self.current_image
             img = self.current_image.rotate(factor, True, interpol) # type: ignore
             self.load_image(img)
+
+    def apply_s_curve(self):
+        dialog = _SCurveDialog(self)
+
+        if dialog.exec():
+            function_name, sigmoid_shift, sigmoid_steep = dialog.get_args()
+        
+            if function_name is None:
+                return
+            
+            self.original_image = self.current_image
+            if function_name == "sigmoid":
+                img = self.current_image.apply_s_curve("sigmoid", {"shift": sigmoid_shift, "steep": sigmoid_steep})
+            else:
+                img = self.current_image.apply_s_curve("custom")
+            
+            self.load_image(img)
+
+
+    def find_road_lines(self):
+        self.original_image = self.current_image
+        img = self.current_image.find_road_lines()
+        self.load_image(img)
+
+
+    def find_eyes(self):
+        self.original_image = self.current_image
+        img = self.current_image.find_eyes()
+        self.load_image(img)
+
+
+    def apply_deblur(self):
+        self.original_image = self.current_image
+        img = self.current_image.deblur()
+        self.load_image(img)
+
+
+    def extract_features(self):
+        self.original_image = self.current_image
+        img = self.current_image.extract_features()
+        self.load_image(img)
+        _FeatureExtractionCompleteDialog().exec()
+
 
 # ------------ End of Operations ------------
 
@@ -447,6 +520,84 @@ class _SizeInputDialogWithInterpolation(QDialog):
 
     def get_width_height(self):
         return int(self.width_input.text()), int(self.height_input.text()), self.combo_box.currentText().lower()
+
+
+class _SCurveDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Görüntü Boyutlarını Girin")
+        self.resize(300, 150)
+
+        layout = QVBoxLayout()
+
+        self.label = QLabel("Kullanılacak Fonksiyon:")
+        self.combo_box = QComboBox()
+        self.combo_box.addItems(["Sigmoid", "Custom"])
+        self.combo_box.currentIndexChanged.connect(self.on_combo_box_change)
+
+
+        self.width_label = QLabel("Kaydırma Faktörü:")
+        self.width_input = QLineEdit()
+        self.width_input.setText("0")
+        self.width_input.setValidator(QDoubleValidator(-100, 100, 2))
+
+        self.height_label = QLabel("Eğim Faktörü:")
+        self.height_input = QLineEdit()
+        self.height_input.setText("1")
+        self.height_input.setValidator(QDoubleValidator(-100, 100, 2))
+
+        self.ok_button = QPushButton("Tamam")
+        self.ok_button.clicked.connect(self.accept)
+
+        self.ok_button.setEnabled(True)
+
+        width_layout = QHBoxLayout()
+        width_layout.addWidget(self.width_label)
+        width_layout.addWidget(self.width_input)
+
+        height_layout = QHBoxLayout()
+        height_layout.addWidget(self.height_label)
+        height_layout.addWidget(self.height_input)
+        
+        layout.addWidget(self.label)
+        layout.addWidget(self.combo_box)
+        layout.addLayout(width_layout)
+        layout.addLayout(height_layout)
+        layout.addWidget(self.ok_button)
+
+        self.setLayout(layout)
+
+        self.width_input.textChanged.connect(self.validate_inputs)
+        self.height_input.textChanged.connect(self.validate_inputs)
+
+    def on_combo_box_change(self, index):
+        if self.combo_box.currentText() == "Sigmoid":
+            self.width_label.show()
+            self.width_input.show()
+            self.height_label.show()
+            self.height_input.show()
+            self.ok_button.setEnabled(False)
+        else:
+            self.width_label.hide()
+            self.width_input.hide()
+            self.height_label.hide()
+            self.height_input.hide()
+            self.ok_button.setEnabled(True)
+
+    def validate_inputs(self):
+        if self.combo_box.currentText() == "Sigmoid":
+            width_valid = self.width_input.validator().validate(self.width_input.text(), 0)[0] == QIntValidator.Acceptable
+            height_valid = self.height_input.validator().validate(self.height_input.text(), 0)[0] == QIntValidator.Acceptable
+
+            if width_valid and height_valid:
+                self.ok_button.setEnabled(True)
+            else:
+                self.ok_button.setEnabled(False)
+        else:
+            self.ok_button.setEnabled(True)
+
+    def get_args(self):
+        return self.combo_box.currentText().lower(), float(self.width_input.text()), float(self.height_input.text()), 
 
 
 class _ZoomInputDialog(QDialog):
@@ -615,6 +766,24 @@ class _ControlsDialog(QDialog):
 
         self.setLayout(layout)
 
+
+class _FeatureExtractionCompleteDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Özellik Çıkartma Tamamlandı")
+        self.resize(300, 150)
+
+        layout = QVBoxLayout()
+
+        self.label = QLabel("Özellik çıkartma işlemi tamamlandı ve excel dosyası kaydedildi.")
+
+        self.ok_button = QPushButton("Tamam")
+        self.ok_button.clicked.connect(self.accept)
+
+        layout.addWidget(self.label)
+        layout.addWidget(self.ok_button)
+
+        self.setLayout(layout)
 
 class DraggableImageView(QGraphicsView):
     def __init__(self):

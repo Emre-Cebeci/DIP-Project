@@ -4,6 +4,9 @@ import copy
 from PyQt5.QtGui import QImage
 from smatrix import SMatrix
 import math
+from utils import SMath
+from collections import defaultdict
+from openpyxl import Workbook
 
 class SImage():
     def __init__(self, image_array: np.ndarray):
@@ -12,10 +15,12 @@ class SImage():
         self.B_matrix = SMatrix.from_nparray(image_array[:, :, 2])
         self.height, self.width = image_array.shape[:2]
 
+
     @classmethod
     def new_empty_image(cls, width: int, height: int):
         image_array = np.ones((height, width, 3), dtype=np.uint8) * 255;
         return cls(image_array)
+
 
     @classmethod
     def from_file_path(cls, file_path: str):
@@ -403,6 +408,373 @@ class SImage():
 
         return new_img
 
+
+    def apply_s_curve(self, function=["sigmoid", "custom"], function_params={}, in_place=False):
+        lut_applied_img = self
+
+        if function == "sigmoid":
+            lut = [int(SMath.sigmoid((i / 255.0 - 0.5) * 2, function_params["shift"], function_params["steep"]) * 255) for i in range(256)]
+            lut_applied_img = self.apply_lut(lut)
+
+        elif function == "custom":
+            lut = [int(SMath.custom_s_curve_function((i / 255.0 - 0.5) * 2) * 255) for i in range(256)]
+            lut_applied_img = self.apply_lut(lut)
+
+        if in_place:
+            self.R_matrix = lut_applied_img.R_matrix
+            self.G_matrix = lut_applied_img.G_matrix
+            self.B_matrix = lut_applied_img.B_matrix
+
+        return lut_applied_img
+    
+
+    @staticmethod
+    def polar_to_cartesian(rho, theta):
+        a = math.cos(theta)
+        b = math.sin(theta)
+        x0 = a * rho
+        y0 = b * rho
+
+        x1 = int(x0 + 1000 * (-b))
+        y1 = int(y0 + 1000 * (a))
+        x2 = int(x0 - 1000 * (-b))
+        y2 = int(y0 - 1000 * (a))
+
+        return (x1, y1), (x2, y2)
+    
+
+    def find_road_lines(self):
+        new_img = SImage.new_empty_image(self.width, self.height)
+        new_img.R_matrix = copy.deepcopy(self.R_matrix)
+        new_img.G_matrix = copy.deepcopy(self.G_matrix)
+        new_img.B_matrix = copy.deepcopy(self.B_matrix)
+
+        new_img.apply_grayscale(True)
+        new_img.apply_gaussian_blur(5, True)
+        new_img.apply_binary_thresholding(75, 255, True)
+        sobel_kernel = SMatrix(3, 3)
+        sobel_kernel[0, 0] = -1
+        sobel_kernel[1, 0] = -2
+        sobel_kernel[2, 0] = -1
+        sobel_kernel[0, 1] = 0
+        sobel_kernel[1, 1] = 0
+        sobel_kernel[2, 1] = 0
+        sobel_kernel[0, 2] = 1
+        sobel_kernel[1, 2] = 2
+        sobel_kernel[2, 2] = 1
+        new_img.R_matrix = new_img.R_matrix.convolve(sobel_kernel)
+        new_img.G_matrix = new_img.G_matrix.convolve(sobel_kernel)
+        new_img.B_matrix = new_img.B_matrix.convolve(sobel_kernel)
+
+
+        thetas = [math.radians(theta) for theta in range(0, 180, 1)]
+        max_dist = int(math.hypot(new_img.width, new_img.height))
+        
+        accumulator = defaultdict(int)  # (rho_index, theta_index) -> count
+
+        for y in range(new_img.height):
+            for x in range(new_img.width):
+                if new_img.R_matrix[y, x] + new_img.B_matrix[y, x]  + new_img.B_matrix[y, x] > 300:
+                    for theta_idx, theta in enumerate(thetas):
+                        rho = int(x * math.cos(theta) + y * math.sin(theta))
+                        rho_idx = rho + max_dist  # Offset to make it non-negative
+                        accumulator[(rho_idx, theta_idx)] += 1
+
+        lines = []
+        for (rho_idx, theta_idx), count in accumulator.items():
+            if count >= 200:
+                rho = rho_idx - max_dist
+                theta = thetas[theta_idx]
+                lines.append((rho, theta))
+
+        for rho, theta in lines:
+            (x1, y1), (x2, y2) = SImage.polar_to_cartesian(rho, theta)
+            new_img.draw_line(x1, y1, x2, y2)
+
+
+        return new_img
+    
+
+    def find_eyes(self):
+        new_img = SImage.new_empty_image(self.width, self.height)
+        new_img.R_matrix = copy.deepcopy(self.R_matrix)
+        new_img.G_matrix = copy.deepcopy(self.G_matrix)
+        new_img.B_matrix = copy.deepcopy(self.B_matrix)
+
+        new_img.apply_grayscale(True)
+        new_img.apply_gaussian_blur(5, True)
+        sobel_kernel = SMatrix(3, 3)
+        sobel_kernel[0, 0] = 1
+        sobel_kernel[1, 0] = 1
+        sobel_kernel[2, 0] = 1
+        sobel_kernel[0, 1] = 1
+        sobel_kernel[1, 1] = -8
+        sobel_kernel[2, 1] = 1
+        sobel_kernel[0, 2] = 1
+        sobel_kernel[1, 2] = 1
+        sobel_kernel[2, 2] = 1
+        new_img.R_matrix = new_img.R_matrix.convolve(sobel_kernel)
+        new_img.G_matrix = new_img.G_matrix.convolve(sobel_kernel)
+        new_img.B_matrix = new_img.B_matrix.convolve(sobel_kernel)
+        new_img.apply_s_curve("sigmoid", {"shift": -0.5, "steep": 5}, True)
+        new_img.apply_binary_thresholding(30, 255, True)
+
+        #new_img.apply_histogram_equalizer(True)
+        accumulator = defaultdict(int)
+        height, width = new_img.height, new_img.width
+        thetas = [math.radians(t) for t in range(0, 360, 5)]
+
+        small_size = self.width if self.width < self.height else self.height
+        
+        radius_range = small_size // 50, small_size // 5
+        step = (radius_range[1] - radius_range[0]) // 15
+
+        for y in range(height):
+            for x in range(width):
+                if new_img.R_matrix[y, x] + new_img.G_matrix[y, x] + new_img.B_matrix[y, x] > 100:
+                    for r in range(radius_range[0], radius_range[1] + 1, step):
+                        for theta in thetas:
+                            a = int(x - r * math.cos(theta))
+                            b = int(y - r * math.sin(theta))
+                            if 0 <= a < width and 0 <= b < height:
+                                accumulator[(a, b, r)] += 1
+
+        circles = []
+        for (a, b, r), count in accumulator.items():
+            if count >= 3 * r:
+                circles.append((a, b, r))
+
+        for a, b, r in circles:
+            self.draw_circle(a, b, r)
+
+        return self
+    
+
+    def draw_circle(self, xc, yc, r, color=255):
+        def plot_circle_points(x, y):
+            points = [
+                (xc + x, yc + y), (xc - x, yc + y),
+                (xc + x, yc - y), (xc - x, yc - y),
+                (xc + y, yc + x), (xc - y, yc + x),
+                (xc + y, yc - x), (xc - y, yc - x),
+            ]
+            for px, py in points:
+                if 0 <= px < self.width and 0 <= py < self.height:
+                    self.R_matrix[py, px] = color
+
+        x = 0
+        y = r
+        d = 1 - r
+        plot_circle_points(x, y)
+
+        while x < y:
+            x += 1
+            if d < 0:
+                d = d + 2 * x + 1
+            else:
+                y -= 1
+                d = d + 2 * (x - y) + 1
+            plot_circle_points(x, y)
+
+    
+    def draw_line(self, x1, y1, x2, y2, value=255):
+        
+        dx = abs(x2 - x1)
+        dy = abs(y2 - y1)
+        x, y = x1, y1
+
+        sx = -1 if x1 > x2 else 1
+        sy = -1 if y1 > y2 else 1
+
+        if dx > dy:
+            err = dx / 2.0
+            while x != x2:
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    self.R_matrix[y, x] = value
+                err -= dy
+                if err < 0:
+                    y += sy
+                    err += dx
+                x += sx
+        else:
+            err = dy / 2.0
+            while y != y2:
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    self.R_matrix[y, x] = value
+                err -= dx
+                if err < 0:
+                    x += sx
+                    err += dy
+                y += sy
+
+        if 0 <= x2 < self.width and 0 <= y2 < self.height:
+            self.R_matrix[y2, x2] = value
+
+
+    def deblur(self):
+        new_img = SImage.new_empty_image(self.width, self.height)
+        new_img.R_matrix = copy.deepcopy(self.R_matrix)
+        new_img.G_matrix = copy.deepcopy(self.G_matrix)
+        new_img.B_matrix = copy.deepcopy(self.B_matrix)
+
+        sobel_kernel = SMatrix(3, 3)
+        sobel_kernel[0, 0] = 1
+        sobel_kernel[1, 0] = 1
+        sobel_kernel[2, 0] = 1
+        sobel_kernel[0, 1] = 1
+        sobel_kernel[1, 1] = -8
+        sobel_kernel[2, 1] = 1
+        sobel_kernel[0, 2] = 1
+        sobel_kernel[1, 2] = 1
+        sobel_kernel[2, 2] = 1
+        new_img.R_matrix = new_img.R_matrix.convolve(sobel_kernel)
+        new_img.G_matrix = new_img.G_matrix.convolve(sobel_kernel)
+        new_img.B_matrix = new_img.B_matrix.convolve(sobel_kernel)
+        new_img.apply_binary_thresholding(True)
+
+        new_img2 = SImage.new_empty_image(self.width, self.height)
+        new_img2.R_matrix = copy.deepcopy(self.R_matrix)
+        new_img2.G_matrix = copy.deepcopy(self.G_matrix)
+        new_img2.B_matrix = copy.deepcopy(self.B_matrix)
+
+        for i in range(self.height):
+            for j in range(self.width):
+                new_img2.R_matrix[i, j] = min(self.R_matrix[i, j] + new_img.R_matrix[i, j], 255)
+                new_img2.G_matrix[i, j] = min(self.G_matrix[i, j] + new_img.G_matrix[i, j], 255)
+                new_img2.B_matrix[i, j] = min(self.B_matrix[i, j] + new_img.B_matrix[i, j], 255)
+
+        return new_img2
+
+
+    def extract_features(self):
+        new_img = self.apply_gaussian_blur(5)
+
+        for i in range(self.height):
+            for j in range(self.width):
+                if self.G_matrix[i, j] >= 75 and self.R_matrix[i, j] + self.B_matrix[i, j] < 75:
+                    new_img.R_matrix[i, j] = 255
+                    new_img.G_matrix[i, j] = 255
+                    new_img.B_matrix[i, j] = 255
+                else:
+                    new_img.R_matrix[i, j] = 0
+                    new_img.G_matrix[i, j] = 0
+                    new_img.B_matrix[i, j] = 0
+        visited = [[False for _ in range(self.width)] for _ in range(self.height)]
+        features = []
+
+        for y in range(self.height):
+            for x in range(self.width):
+                if new_img.R_matrix[y, x] == 255 and not visited[y][x]:
+                    queue = [(x, y)]
+                    region_pixels = []
+                    min_x, max_x = x, x
+                    min_y, max_y = y, y
+                    energy = 0
+                    histogram = [0] * 256
+
+                    while queue:
+                        cx, cy = queue.pop()
+                        if 0 <= cx < self.width and 0 <= cy < self.height:
+                            if not visited[cy][cx] and new_img.R_matrix[cy, cx] == 255:
+                                visited[cy][cx] = True
+                                region_pixels.append((cx, cy))
+
+                                # Güncelle sınırlar
+                                min_x = min(min_x, cx)
+                                max_x = max(max_x, cx)
+                                min_y = min(min_y, cy)
+                                max_y = max(max_y, cy)
+
+                                val = self.G_matrix[cy, cx]  # Orijinal yeşil kanal
+                                energy += val * val
+                                histogram[val] += 1
+
+                                # 4-komşuluk
+                                queue.extend([
+                                    (cx + 1, cy),
+                                    (cx - 1, cy),
+                                    (cx, cy + 1),
+                                    (cx, cy - 1)
+                                ])
+
+                    if len(region_pixels) < 5:
+                        continue
+
+                    width = max_x - min_x + 1
+                    length = max_y - min_y + 1
+                    diagonal = int((width ** 2 + length ** 2) ** 0.5)
+                    cx = (min_x + max_x) // 2
+                    cy = (min_y + max_y) // 2
+
+                    values = [self.G_matrix[py, px] for (px, py) in region_pixels]
+                    mean = sum(values) // len(values)
+                    median = sorted(values)[len(values) // 2]
+
+                    # Entropy hesapla
+                    total = sum(histogram)
+                    entropy = 0
+                    for count in histogram:
+                        if count > 0:
+                            p = count / total
+                            entropy -= p * math.log2(p)
+
+                    features.append({
+                        "center": (cx, cy),
+                        "width": width,
+                        "length": length,
+                        "diagonal": diagonal,
+                        "energy": energy,
+                        "entropy": entropy,
+                        "mean": mean,
+                        "median": median
+                    })
+
+        SImage.save_features_to_excel(features)
+        return new_img
+
+
+    def apply_lut(self, lut, in_place=False):
+        new_img = SImage.new_empty_image(self.width, self.height)
+
+        for i in range(self.height):
+            for j in range(self.width):
+                new_img.R_matrix[i, j] = lut[self.R_matrix[i, j]]
+                new_img.G_matrix[i, j] = lut[self.G_matrix[i, j]]
+                new_img.B_matrix[i, j] = lut[self.B_matrix[i, j]]
+
+        if in_place:
+            self.R_matrix = new_img.R_matrix
+            self.G_matrix = new_img.G_matrix
+            self.B_matrix = new_img.B_matrix
+        
+        return new_img
+
+    @staticmethod
+    def save_features_to_excel(features, filename="ozellikler.xlsx"):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Özellikler"
+
+        # Başlıklar
+        headers = ["No", "Center", "Length", "Width", "Diagonal", "Energy", "Entropy", "Mean", "Median"]
+        ws.append(headers)
+
+        # Veriler
+        for i, f in enumerate(features, 1):
+            row = [
+                i,
+                f"{f['center'][0]},{f['center'][1]}",
+                f"{f['length']} px",
+                f"{f['width']} px",
+                f"{f['diagonal']} px",
+                round(f["energy"], 3),
+                round(f["entropy"], 3),
+                f["mean"],
+                f["median"]
+            ]
+            ws.append(row)
+
+        wb.save(filename)
     @staticmethod
     def _equalize_channel(channel):
         height = channel.rows
